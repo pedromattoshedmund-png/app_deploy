@@ -1,0 +1,22 @@
+name: CD Básico K3s
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verificar cluster
+        run: kubectl get nodes
+
+      - name: Deploy no K3s
+        run: |
+          kubectl apply -f k8s/
+          kubectl rollout status deployment/demo-app
