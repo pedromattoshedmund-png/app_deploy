@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metabase
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metabase
+  template:
+    metadata:
+      labels:
+        app: metabase
+    spec:
+      containers:
+      - name: metabase
+        image: metabase/metabase:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: MB_DB_FILE
+          value: /metabase-data/metabase.db
+        volumeMounts:
+        - name: metabase-data
+          mountPath: /metabase-data
+      volumes:
+      - name: metabase-data
+        emptyDir: {}

@@ -1,17 +1,19 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: demo-app
+  name: metabase
+  namespace: default
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
   ingressClassName: traefik
   rules:
-  - host: demo.lab.local
-    http:
+  - http:
       paths:
-      - path: /demo-app
+      - path: /
         pathType: Prefix
         backend:
           service:
-            name: demo-app
+            name: metabase
             port:
               number: 80
