@@ -4,7 +4,7 @@ metadata:
   name: demo-app
   namespace: default
   annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: default-demo-app-strip@kubernetescrd
+    #traefik.ingress.kubernetes.io/router.middlewares: default-demo-app-strip@kubernetescrd
 spec:
   ingressClassName: traefik
   rules:
