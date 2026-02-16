@@ -1,4 +1,4 @@
-name: CD K3s (podman build -> test -> deploy)
+name: CD K3s (Podman build → test → deploy)
 
 on:
   push:
@@ -9,7 +9,6 @@ env:
   IMAGE_NAME: demo-app
   CONTAINER_NAME: demo-app-test
   TEST_PORT: "8080"
-  HEALTH_PATH: "/health"
 
 jobs:
   build:
@@ -22,66 +21,39 @@ jobs:
 
       - name: Debug workspace
         run: |
-          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "Workspace:"
           pwd
           ls -la
-          echo "---- app/ ----"
-          ls -la app || true
-          echo "---- k8s/ ----"
-          ls -la k8s || true
+          echo "Dockerfile encontrado em:"
+          find . -maxdepth 2 -iname "dockerfile" -o -iname "Dockerfile"
 
-      - name: Detectar Dockerfile/Containerfile
-        id: df
-        run: |
-          FILE=""
-          # procura na raiz
-          for f in Dockerfile Containerfile dockerfile containerfile; do
-            if [ -f "$GITHUB_WORKSPACE/$f" ]; then
-              FILE="$GITHUB_WORKSPACE/$f"
-              break
-            fi
-          done
-
-          # se não achou, procura em app/
-          if [ -z "$FILE" ]; then
-            for f in Dockerfile Containerfile dockerfile containerfile; do
-              if [ -f "$GITHUB_WORKSPACE/app/$f" ]; then
-                FILE="$GITHUB_WORKSPACE/app/$f"
-                break
-              fi
-            done
-          fi
-
-          if [ -z "$FILE" ]; then
-            echo "ERRO: Nenhum Dockerfile/Containerfile encontrado na raiz nem em app/"
-            echo "Listando candidatos:"
-            find "$GITHUB_WORKSPACE" -maxdepth 3 -type f \( -iname "*dockerfile*" -o -iname "*containerfile*" \) -print || true
-            exit 1
-          fi
-
-          echo "Usando arquivo: $FILE"
-          echo "file=$FILE" >> "$GITHUB_OUTPUT"
-
-      - name: Build da imagem (Podman)
+      - name: Build da imagem
         run: |
           podman --cgroup-manager=cgroupfs build \
-            -f "${{ steps.df.outputs.file }}" \
+            -f "${GITHUB_WORKSPACE}/dockerfile" \
             -t "${IMAGE_NAME}:${GITHUB_SHA}" \
-            "${GITHUB_WORKSPACE}/app"
+            "${GITHUB_WORKSPACE}"
 
-      - name: Exportar imagem para TAR
+      - name: Exportar imagem para TAR (docker-archive)
         run: |
-          podman save "${IMAGE_NAME}:${GITHUB_SHA}" -o image.tar
+          podman save --format docker-archive \
+            -o image.tar \
+            ${IMAGE_NAME}:${GITHUB_SHA}
 
-      - name: Upload artifact
+          ls -lh image.tar
+          sha256sum image.tar | tee image.tar.sha256
+
+      - name: Upload artifact da imagem
         uses: actions/upload-artifact@v4
         with:
           name: podman-image
-          path: image.tar
+          path: |
+            image.tar
+            image.tar.sha256
           retention-days: 1
 
   test:
-    name: Testar imagem (Podman)
+    name: Testar imagem com Podman
     runs-on: self-hosted
     needs: build
 
@@ -91,41 +63,43 @@ jobs:
         with:
           name: podman-image
 
+      - name: Verificar integridade do TAR
+        run: |
+          ls -lh
+          sha256sum -c image.tar.sha256
+
       - name: Load imagem
         run: |
-          podman load -i image.tar
-          podman images | head -n 30
+          podman --cgroup-manager=cgroupfs load -i image.tar
+          podman images | head -n 20
 
       - name: Subir container para teste
         run: |
-          podman rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+          podman rm -f ${CONTAINER_NAME} 2>/dev/null || true
 
-          podman run -d --name "${CONTAINER_NAME}" \
-            -p "${TEST_PORT}:${TEST_PORT}" \
-            "${IMAGE_NAME}:${GITHUB_SHA}"
+          podman run -d --name ${CONTAINER_NAME} \
+            -p ${TEST_PORT}:${TEST_PORT} \
+            ${IMAGE_NAME}:${GITHUB_SHA}
 
-      - name: Smoke test HTTP
+      - name: Smoke test HTTP (/health)
         run: |
-          URL="http://localhost:${TEST_PORT}${HEALTH_PATH}"
-          echo "Testando: $URL"
-
-          for i in {1..25}; do
-            if curl -fsS "$URL" >/dev/null; then
-              echo "OK: app respondeu"
+          for i in {1..20}; do
+            if curl -fsS http://localhost:${TEST_PORT}/health >/dev/null; then
+              echo "✅ App respondeu OK"
               exit 0
             fi
-            echo "Aguardando app... ($i/25)"
+            echo "⏳ Aguardando app... ($i/20)"
             sleep 2
           done
 
-          echo "ERRO: app não respondeu a tempo"
-          podman logs "${CONTAINER_NAME}" || true
+          echo "❌ App não respondeu"
+          podman logs ${CONTAINER_NAME} || true
           exit 1
 
-      - name: Remover container (sempre)
+      - name: Remover container de teste (sempre)
         if: always()
         run: |
-          podman rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+          podman rm -f ${CONTAINER_NAME} 2>/dev/null || true
 
   deploy:
     name: Deploy no K3s
@@ -133,7 +107,7 @@ jobs:
     needs: test
 
     steps:
-      - name: Checkout (manifests)
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Verificar cluster
@@ -144,16 +118,21 @@ jobs:
         with:
           name: podman-image
 
+      - name: Verificar integridade do TAR
+        run: sha256sum -c image.tar.sha256
+
       - name: Importar imagem no containerd do K3s
         run: |
           sudo k3s ctr images import image.tar
-          sudo k3s ctr -n k8s.io images ls | grep "${IMAGE_NAME}" || true
+          sudo k3s ctr -n k8s.io images ls | grep ${IMAGE_NAME} || true
 
-      - name: Aplicar manifests
+      - name: Aplicar manifests Kubernetes
         run: |
           sudo kubectl apply -f k8s/
 
-      - name: Atualizar imagem do deployment e aguardar rollout
+      - name: Atualizar imagem do deployment
         run: |
-          sudo kubectl set image deployment/${APP_NAME} ${APP_NAME}=${IMAGE_NAME}:${GITHUB_SHA}
+          sudo kubectl set image deployment/${APP_NAME} \
+            ${APP_NAME}=${IMAGE_NAME}:${GITHUB_SHA}
+
           sudo kubectl rollout status deployment/${APP_NAME}
