@@ -25,13 +25,47 @@ jobs:
           echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
           pwd
           ls -la
+          echo "---- app/ ----"
           ls -la app || true
+          echo "---- k8s/ ----"
           ls -la k8s || true
+
+      - name: Detectar Dockerfile/Containerfile
+        id: df
+        run: |
+          FILE=""
+          # procura na raiz
+          for f in Dockerfile Containerfile dockerfile containerfile; do
+            if [ -f "$GITHUB_WORKSPACE/$f" ]; then
+              FILE="$GITHUB_WORKSPACE/$f"
+              break
+            fi
+          done
+
+          # se não achou, procura em app/
+          if [ -z "$FILE" ]; then
+            for f in Dockerfile Containerfile dockerfile containerfile; do
+              if [ -f "$GITHUB_WORKSPACE/app/$f" ]; then
+                FILE="$GITHUB_WORKSPACE/app/$f"
+                break
+              fi
+            done
+          fi
+
+          if [ -z "$FILE" ]; then
+            echo "ERRO: Nenhum Dockerfile/Containerfile encontrado na raiz nem em app/"
+            echo "Listando candidatos:"
+            find "$GITHUB_WORKSPACE" -maxdepth 3 -type f \( -iname "*dockerfile*" -o -iname "*containerfile*" \) -print || true
+            exit 1
+          fi
+
+          echo "Usando arquivo: $FILE"
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
       - name: Build da imagem (Podman)
         run: |
           podman --cgroup-manager=cgroupfs build \
-            -f "${GITHUB_WORKSPACE}/dockerfile" \
+            -f "${{ steps.df.outputs.file }}" \
             -t "${IMAGE_NAME}:${GITHUB_SHA}" \
             "${GITHUB_WORKSPACE}/app"
 
