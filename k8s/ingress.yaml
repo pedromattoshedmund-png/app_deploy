@@ -3,6 +3,47 @@ kind: Namespace
 metadata:
   name: traefik-system
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik
+  namespace: traefik-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: traefik-role
+rules:
+- apiGroups: [""]
+  resources: ["services","endpoints","secrets","nodes"]
+  verbs: ["get","list","watch"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses","ingressclasses"]
+  verbs: ["get","list","watch"]
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]
+  verbs: ["get","list","watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: traefik-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: traefik-role
+subjects:
+- kind: ServiceAccount
+  name: traefik
+  namespace: traefik-system
+---
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: traefik
+spec:
+  controller: traefik.io/ingress-controller
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,21 +59,27 @@ spec:
       labels:
         app: traefik
     spec:
+      serviceAccountName: traefik
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/hostname: master-1
       containers:
       - name: traefik
         image: traefik:v3.0
         args:
           - "--entrypoints.web.address=:80"
           - "--entrypoints.websecure.address=:443"
-          - "--providers.kubernetesingress"
+          - "--providers.kubernetesingress=true"
+          - "--providers.kubernetesingress.ingressclass=traefik"
           - "--api.dashboard=true"
+          - "--ping=true"
+          - "--log.level=INFO"
         ports:
-          - containerPort: 80
-            name: web
-          - containerPort: 443
-            name: websecure
+          - name: web
+            containerPort: 80
+          - name: websecure
+            containerPort: 443
 ---
 apiVersion: v1
 kind: Service
@@ -44,7 +91,11 @@ spec:
   selector:
     app: traefik
   ports:
-  - port: 80
-    targetPort: 80
-  - port: 443
-    targetPort: 443
+    - name: web
+      port: 80
+      targetPort: 80
+      protocol: TCP
+    - name: websecure
+      port: 443
+      targetPort: 443
+      protocol: TCP
