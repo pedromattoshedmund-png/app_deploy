@@ -1,22 +1,121 @@
-name: CD Básico K3s
+name: CD K3s (build -> test -> deploy)
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+
+env:
+  APP_NAME: demo-app
+  IMAGE_NAME: demo-app
+  CONTAINER_NAME: demo-app-test
+  TEST_PORT: "8080"
 
 jobs:
-  deploy:
+  build:
+    name: Build imagem Docker
     runs-on: self-hosted
-
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
     steps:
       - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Definir tag da imagem
+        id: meta
+        run: |
+          echo "tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build da imagem
+        run: |
+          docker build -t "${IMAGE_NAME}:${GITHUB_SHA}" .
+
+      - name: Exportar imagem para TAR (artifact)
+        run: |
+          docker save "${IMAGE_NAME}:${GITHUB_SHA}" -o image.tar
+
+      - name: Upload artifact da imagem
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar
+          retention-days: 1
+
+  test:
+    name: Testar imagem no Docker
+    runs-on: self-hosted
+    needs: build
+    steps:
+      - name: Download artifact da imagem
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load da imagem
+        run: |
+          docker load -i image.tar
+          docker images | head -n 20
+
+      - name: Subir container para teste
+        run: |
+          # Garante limpeza de runs antigas
+          docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+
+          docker run -d --name "${CONTAINER_NAME}" \
+            -p "${TEST_PORT}:${TEST_PORT}" \
+            "${IMAGE_NAME}:${GITHUB_SHA}"
+
+      - name: Smoke test (HTTP)
+        run: |
+          # Espera app responder (ajuste endpoint conforme sua API)
+          for i in {1..20}; do
+            if curl -fsS "http://localhost:${TEST_PORT}/health" >/dev/null; then
+              echo "OK: /health respondeu"
+              exit 0
+            fi
+            echo "Aguardando app... ($i/20)"
+            sleep 2
+          done
+
+          echo "ERRO: app não respondeu a tempo"
+          docker logs "${CONTAINER_NAME}" || true
+          exit 1
+
+      - name: Remover container de teste (sempre)
+        if: always()
+        run: |
+          docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+
+  deploy:
+    name: Deploy no K3s
+    runs-on: self-hosted
+    needs: test
+    steps:
+      - name: Checkout (manifests)
         uses: actions/checkout@v4
 
       - name: Verificar cluster
         run: sudo kubectl get nodes
 
-      - name: Deploy no K3s
+      - name: Download artifact da imagem
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Importar imagem no containerd do K3s
+        run: |
+          # Importa a imagem no runtime do K3s (containerd)
+          sudo k3s ctr images import image.tar
+
+          # (opcional) listar imagens no namespace do k8s
+          sudo k3s ctr -n k8s.io images ls | head -n 50
+
+      - name: Aplicar manifests
         run: |
           sudo kubectl apply -f k8s/
-          sudo kubectl rollout status deployment/demo-app
+
+      - name: Atualizar imagem do deployment para o SHA atual
+        run: |
+          # Troca imagem do deployment para a tag do commit
+          # Ajuste o nome do container (aqui assumo "demo-app" no spec)
+          sudo kubectl set image deployment/${APP_NAME} ${APP_NAME}=${IMAGE_NAME}:${GITHUB_SHA}
+          sudo kubectl rollout status deployment/${APP_NAME}
