@@ -1,19 +1,21 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
-  name: demo-app
+  name: hello-world
+  namespace: default
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.priority: "100"
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: demo-app
-  template:
-    metadata:
-      labels:
-        app: demo-app
-    spec:
-      containers:
-      - name: web
-        image: nginx:alpine
-        ports:
-        - containerPort: 80
+  ingressClassName: traefik
+  rules:
+  - host: demo.lab.local
+    http:
+      paths:
+      - path: /hello
+        pathType: Prefix
+        backend:
+          service:
+            name: hello-world
+            port:
+              number: 80
