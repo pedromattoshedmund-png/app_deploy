@@ -1,20 +1,18 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: demo-app
+  name: hello-world
   namespace: default
-  annotations:
-    #traefik.ingress.kubernetes.io/router.middlewares: default-demo-app-strip@kubernetescrd
 spec:
   ingressClassName: traefik
   rules:
   - host: demo.lab.local
     http:
       paths:
-      - path: /demo-app
+      - path: /hello
         pathType: Prefix
         backend:
           service:
-            name: demo-app
+            name: hello-world
             port:
               number: 80
