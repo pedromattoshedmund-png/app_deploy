@@ -104,15 +104,6 @@ jobs:
         with:
           name: podman-image
 
-      - name: Verificar integridade do TAR
-        run: |
-          ls -lh
-          if [ -f image.tar.sha256 ]; then
-            sha256sum -c image.tar.sha256
-          else
-            echo "⚠️ image.tar.sha256 não encontrado. Verificando tar..."
-            tar -tf image.tar >/dev/null
-          fi
 
       - name: Load imagem
         run: |
