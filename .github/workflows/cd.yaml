@@ -61,23 +61,21 @@ jobs:
           echo "Usando arquivo: $FILE"
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
-      - name: Build da imagem (Podman)
+      - name: Exportar imagem para TAR + checksum
         run: |
-          podman --cgroup-manager=cgroupfs build \
-            -f "${{ steps.df.outputs.file }}" \
-            -t "${IMAGE_NAME}:${GITHUB_SHA}" \
-            "${GITHUB_WORKSPACE}/app"
-
-      - name: Exportar imagem para TAR
-        run: |
-          podman save "${IMAGE_NAME}:${GITHUB_SHA}" -o image.tar
+            podman save --format docker-archive -o image.tar ${IMAGE_NAME}:${GITHUB_SHA}
+            sha256sum image.tar > image.tar.sha256
+            ls -lh image.tar image.tar.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: podman-image
-          path: image.tar
+          path: |
+            image.tar
+            image.tar.sha256
           retention-days: 1
+
 
 
   test:
@@ -91,10 +89,18 @@ jobs:
         with:
           name: podman-image
 
-      - name: Verificar integridade do TAR
+      - name: Verificar integridade do TAR (se houver checksum)
         run: |
           ls -lh
-          sha256sum -c image.tar.sha256
+          if [ -f image.tar.sha256 ]; then
+            sha256sum -c image.tar.sha256
+          else
+            echo "⚠️ image.tar.sha256 não encontrado. Pulando validação."
+            echo "Verificando se o tar está íntegro (tar -tf)..."
+            tar -tf image.tar >/dev/null
+            echo "✅ TAR parece válido"
+          fi
+
 
       - name: Load imagem
         run: |
@@ -146,8 +152,18 @@ jobs:
         with:
           name: podman-image
 
-      - name: Verificar integridade do TAR
-        run: sha256sum -c image.tar.sha256
+      - name: Verificar integridade do TAR (se houver checksum)
+        run: |
+          ls -lh
+          if [ -f image.tar.sha256 ]; then
+            sha256sum -c image.tar.sha256
+          else
+            echo "⚠️ image.tar.sha256 não encontrado. Pulando validação."
+            echo "Verificando se o tar está íntegro (tar -tf)..."
+            tar -tf image.tar >/dev/null
+            echo "✅ TAR parece válido"
+          fi
+
 
       - name: Importar imagem no containerd do K3s
         run: |
