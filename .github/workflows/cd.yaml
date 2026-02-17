@@ -33,6 +33,7 @@ jobs:
         id: df
         run: |
           FILE=""
+
           # procura na raiz
           for f in Dockerfile Containerfile dockerfile containerfile; do
             if [ -f "$GITHUB_WORKSPACE/$f" ]; then
@@ -61,11 +62,27 @@ jobs:
           echo "Usando arquivo: $FILE"
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
+      - name: Build da imagem (Podman)
+        run: |
+          # Contexto do build = pasta onde está o Dockerfile/Containerfile
+          CONTEXT_DIR="$(dirname '${{ steps.df.outputs.file }}')"
+
+          echo "Contexto do build: $CONTEXT_DIR"
+          podman --cgroup-manager=cgroupfs build \
+            -f "${{ steps.df.outputs.file }}" \
+            -t "${IMAGE_NAME}:${GITHUB_SHA}" \
+            "$CONTEXT_DIR"
+
+          podman images | head -n 20
+
       - name: Exportar imagem para TAR + checksum
         run: |
-            podman save --format docker-archive -o image.tar ${IMAGE_NAME}:${GITHUB_SHA}
-            sha256sum image.tar > image.tar.sha256
-            ls -lh image.tar image.tar.sha256
+          podman --cgroup-manager=cgroupfs save --format docker-archive \
+            -o image.tar \
+            ${IMAGE_NAME}:${GITHUB_SHA}
+
+          sha256sum image.tar > image.tar.sha256
+          ls -lh image.tar image.tar.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -75,8 +92,6 @@ jobs:
             image.tar
             image.tar.sha256
           retention-days: 1
-
-
 
   test:
     name: Testar imagem com Podman
@@ -89,18 +104,15 @@ jobs:
         with:
           name: podman-image
 
-      - name: Verificar integridade do TAR (se houver checksum)
+      - name: Verificar integridade do TAR
         run: |
           ls -lh
           if [ -f image.tar.sha256 ]; then
             sha256sum -c image.tar.sha256
           else
-            echo "⚠️ image.tar.sha256 não encontrado. Pulando validação."
-            echo "Verificando se o tar está íntegro (tar -tf)..."
+            echo "⚠️ image.tar.sha256 não encontrado. Verificando tar..."
             tar -tf image.tar >/dev/null
-            echo "✅ TAR parece válido"
           fi
-
 
       - name: Load imagem
         run: |
@@ -152,18 +164,15 @@ jobs:
         with:
           name: podman-image
 
-      - name: Verificar integridade do TAR (se houver checksum)
+      - name: Verificar integridade do TAR
         run: |
           ls -lh
           if [ -f image.tar.sha256 ]; then
             sha256sum -c image.tar.sha256
           else
-            echo "⚠️ image.tar.sha256 não encontrado. Pulando validação."
-            echo "Verificando se o tar está íntegro (tar -tf)..."
+            echo "⚠️ image.tar.sha256 não encontrado. Verificando tar..."
             tar -tf image.tar >/dev/null
-            echo "✅ TAR parece válido"
           fi
-
 
       - name: Importar imagem no containerd do K3s
         run: |
@@ -174,7 +183,7 @@ jobs:
         run: |
           sudo kubectl apply -f k8s/
 
-      - name: Atualizar imagem do deployment
+      - name: Atualizar imagem do deployment + rollout
         run: |
           sudo kubectl set image deployment/${APP_NAME} \
             ${APP_NAME}=${IMAGE_NAME}:${GITHUB_SHA}
