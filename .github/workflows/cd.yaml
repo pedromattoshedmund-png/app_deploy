@@ -68,16 +68,16 @@ jobs:
           CONTEXT_DIR="$(dirname '${{ steps.df.outputs.file }}')"
 
           echo "Contexto do build: $CONTEXT_DIR"
-          podman --cgroup-manager=cgroupfs build \
+          sudo podman --cgroup-manager=cgroupfs build \
             -f "${{ steps.df.outputs.file }}" \
             -t "${IMAGE_NAME}:${GITHUB_SHA}" \
             "$CONTEXT_DIR"
 
-          podman images | head -n 20
+          sudo podman images | head -n 20
 
       - name: Exportar imagem para TAR + checksum
         run: |
-          podman --cgroup-manager=cgroupfs save --format docker-archive \
+          sudo podman --cgroup-manager=cgroupfs save --format docker-archive \
             -o image.tar \
             ${IMAGE_NAME}:${GITHUB_SHA}
 
@@ -107,21 +107,21 @@ jobs:
 
       - name: Load imagem
         run: |
-          podman --cgroup-manager=cgroupfs load -i image.tar
-          podman images | head -n 20
+          sudo podman --cgroup-manager=cgroupfs load -i image.tar
+          sudo podman images | head -n 20
 
       - name: Subir container para teste
         run: |
-          podman rm -f ${CONTAINER_NAME} 2>/dev/null || true
+          sudo podman rm -f ${CONTAINER_NAME} 2>/dev/null || true
 
-          podman run -d --name ${CONTAINER_NAME} \
+          sudo podman run -d --name ${CONTAINER_NAME} \
             -p ${TEST_PORT}:${TEST_PORT} \
             ${IMAGE_NAME}:${GITHUB_SHA}
 
       - name: Smoke test HTTP (/health)
         run: |
           for i in {1..20}; do
-            if curl -fsS http://localhost:${TEST_PORT}/health >/dev/null; then
+            if sudo curl -fsS http://localhost:${TEST_PORT}/health >/dev/null; then
               echo "✅ App respondeu OK"
               exit 0
             fi
@@ -130,13 +130,13 @@ jobs:
           done
 
           echo "❌ App não respondeu"
-          podman logs ${CONTAINER_NAME} || true
+          sudo podman logs ${CONTAINER_NAME} || true
           exit 1
 
       - name: Remover container de teste (sempre)
         if: always()
         run: |
-          podman rm -f ${CONTAINER_NAME} 2>/dev/null || true
+          sudo podman rm -f ${CONTAINER_NAME} 2>/dev/null || true
 
   deploy:
     name: Deploy no K3s
